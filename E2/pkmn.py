@@ -2,7 +2,7 @@ import heapq
 from math import sqrt
 import pygame
 import time
-
+import random
 
 ## Player frames and animation
 
@@ -30,12 +30,17 @@ def get_animations(spritesheet):
 
 #
 # NPC CLASS
+pokemon_image = {
+    "ditto" : 'images/ditto.png',
+    "bulbasaur" : 'images/Bulbasaur.png',
+    "charmander" : 'images/Charmander.png'
+}
 
 class NPC(pygame.sprite.Sprite):
-    def __init__(self, image_t, position,size=(1,1)):
+    def __init__(self, position,size=(1,1)):
         super().__init__()
+        self.pokemon = "ditto"
         self.image = pygame.image.load('images/ditto.png').convert_alpha()
-        self.image_close= pygame.image.load(image_t).convert_alpha()
         self.rect = self.image.get_rect(topleft=position)
         self.node_path = []
         self.move_delay = 1
@@ -49,11 +54,12 @@ class NPC(pygame.sprite.Sprite):
         self.current_node = None
         self.target_set = False
 
+
     def set_path(self, path):
         self.node_path = path
-    
+
     def update(self, player, graph, npcs_group):
-        
+
         if time.time() - player.last_movement_time >= self.move_delay:
             self.is_waiting = False
         else:
@@ -62,10 +68,8 @@ class NPC(pygame.sprite.Sprite):
         if self.is_waiting:
             self.set_target(graph,(player.rect.x, player.rect.y))
             self.target_set = True
-            
-        decision_tree = DecisionTree(self)
-        decision_tree.make_decision(player.rect.topleft, graph)
-        
+
+
         # Speed update if the npc is in the blue floor
         node_x = self.rect.centerx // cell_size
         node_y = self.rect.centery // cell_size
@@ -75,10 +79,15 @@ class NPC(pygame.sprite.Sprite):
             self.speed = self.fast_speed
         else:
             self.speed = self.normal_speed
-        
+
+        if self.is_on_pokeball():
+            random_pokemon = random.choice(list(pokemon_image.keys()))
+            self.change_image(random_pokemon)
+            self.pokemon = random_pokemon
+            
         if self.node_path and not self.is_waiting:
             next_node = self.node_path[0]
-            
+
             if next_node.f_type == 0:
                 self.node_path = []
                 return
@@ -94,12 +103,12 @@ class NPC(pygame.sprite.Sprite):
                 self.current_node = next_node
                 self.node_path.pop(0)
         self.enforce_window_bounds();
-        
+
         if not self.node_path:
-            for npc in npc_group:
+            for npc in npcs_group:
                 if npc != self and self.rect.colliderect(npc.rect):
                     self.avoid_collision(npc)
-                
+
     def enforce_window_bounds(self):
         if self.rect.left < 0:
             self.rect.left = 0
@@ -109,7 +118,15 @@ class NPC(pygame.sprite.Sprite):
             self.rect.top = 0
         if self.rect.bottom > height:
             self.rect.bottom = height
-            
+
+    def is_on_pokeball(self):
+        pokeball_position = (22 * cell_size, 13 * cell_size)
+        npc_position = (self.rect.x, self.rect.y)
+
+        if npc_position == pokeball_position:
+            return True
+        return False
+    
     def avoid_collision(self, other_npc):
         overlap_x = self.rect.centerx - other_npc.rect.centerx
         overlap_y = self.rect.centery - other_npc.rect.centery
@@ -121,24 +138,27 @@ class NPC(pygame.sprite.Sprite):
             else:
                 self.rect.x -= self.speed
         else:
-        # vertical collision
+            # vertical collision
             if overlap_y > 0:
                 self.rect.y += self.speed
             else:
                 self.rect.y -= self.speed
-                
+
     def set_target(self, graph, target_position):
         start_node = graph.grid[self.rect.x // cell_size][self.rect.y // cell_size]
         goal_node = graph.grid[target_position[0] // cell_size][target_position[1] // cell_size]
-        self.node_path = astar_pathfinding(graph, start_node, goal_node)
+        self.node_path = astar_pathfinding(start_node, goal_node, self.pokemon)
+
+        
         self.current_node = start_node
-    
+
     def is_player_near(self, player_position, threshold=20):
         distance = sqrt((self.position[0] - player_position[0]) ** 2 + (self.position[1] - player_position[1]) ** 2)
         return distance < threshold
-    
-    def change_image(self):
-        self.image = self.image_close
+
+    def change_image(self, transformation):
+        self.pokemon = transformation
+        self.image = pygame.image.load(pokemon_image.get(transformation)).convert_alpha()
 
 #
 # PLAYER CLASS
@@ -164,16 +184,17 @@ class Player(pygame.sprite.Sprite):
         self.fast_speed = 2
         self.normal_speed = 1
         self.last_movement_time = time.time()
-                
-                
+        self.lives = 5
+
+
     def update(self):
         keys = pygame.key.get_pressed()
         self.is_moving = False
-        
+
         # Speed update if the npc is in the blue floor
         cell_x = self.rect.centerx // cell_size
         cell_y = self.rect.centery // cell_size
-        
+
         current_node = graph.grid[cell_x][cell_y]
         if current_node.f_type == 2:
             self.speed = self.fast_speed
@@ -192,7 +213,7 @@ class Player(pygame.sprite.Sprite):
         elif keys[pygame.K_RIGHT] and self.rect.right < width:
             target_x = (self.rect.right + self.speed - 1) // cell_size
             target_y = cell_y
-            if graph.grid[target_y][target_x].f_type != 0:  # Si no es pared
+            if graph.grid[target_y][target_x].f_type != 0:
                 self.rect.x += self.speed
                 self.direction = "right"
                 self.is_moving = True
@@ -200,7 +221,7 @@ class Player(pygame.sprite.Sprite):
         if keys[pygame.K_UP] and self.rect.top > 0:
             target_x = cell_x
             target_y = (self.rect.top - self.speed) // cell_size
-            if graph.grid[target_y][target_x].f_type != 0:  # Si no es pared
+            if graph.grid[target_y][target_x].f_type != 0:
                 self.rect.y -= self.speed
                 self.direction = "up"
                 self.is_moving = True
@@ -223,7 +244,7 @@ class Player(pygame.sprite.Sprite):
             self.image = pygame.transform.scale(
                 self.animations[self.direction][self.frame_index],
                 (height_player, width_player),
-            )  # Escalar la imagen
+            )
         else:
             self.frame_index = 0
             self.image = pygame.transform.scale(
@@ -238,6 +259,7 @@ class Node:
         self.f_type = f_type
         self.connections = []
 
+                
     def __lt__(self, other):
         return False
 
@@ -246,15 +268,15 @@ class Node:
 
     def __repr__(self):
         return self.__str__()
-    
+
 class Connection:
-    def __init__(self, from_node, to_node, cost):
+    def __init__(self, from_node = Node, to_node= Node):
         self.from_node = from_node
         self.to_node = to_node
-        self.cost = cost
+
 
 class Graph:
-    
+
     def __init__(self, grid_width, grid_height):
         self.grid = [[Node(x, y) for y in range(grid_height)] for x in range(grid_width)]
         self.grid_width = grid_width
@@ -278,14 +300,11 @@ class Graph:
             nx, ny = node.x + dx, node.y + dy
             if 0 <= nx < self.grid_width and 0 <= ny < self.grid_height:
                 neighbor = self.grid[nx][ny]
-                if neighbor.f_type == 1:
-                    cost = 1
-                elif neighbor.f_type ==2:
-                    cost = 0.5
-                node.connections.append(Connection(node, neighbor, cost))
+                connection = Connection(node, neighbor)
+                node.connections.append(connection)
 
-    def mark_as_wall(self, walls_positions,floor_type):
-        if(floor_type ==0):
+    def set_floor_type(self, walls_positions,floor_type):
+        if(floor_type == 0):
             for x,y in walls_positions:
                 if 0 <= x < self.grid_width and 0 <= y < self.grid_height:
                     node = self.grid[x][y]
@@ -301,23 +320,26 @@ class Graph:
                             neighbor.connections = [
                             conn for conn in neighbor.connections if conn.to_node != node
                         ]
-        elif (floor_type==2):
+        else :
             for(x,y) in walls_positions:
                 if 0 <= x < self.grid_width and 0 <= y < self.grid_height:
                     node = self.grid[x][y]
-                    node.f_type = 2
+                    node.f_type = floor_type
+                    node.connections = []
+                    directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                    self.add_connections_for_node(node, directions)
 
 def heuristic(node1, node2):
     dx = abs(node1.x - node2.x)
     dy = abs(node1.y - node2.y)
-    return sqrt(dx**2 + dy**2)
+    return dx + dy
 
-def astar_pathfinding(graph, start_node, goal_node):
+def astar_pathfinding(start_node, goal_node, npc):
     open_list = []
     heapq.heappush(open_list, (0, start_node))
     came_from = {}
     cost_so_far = {start_node: 0}
-    
+
     if goal_node.f_type == 0:
         return None
 
@@ -335,9 +357,28 @@ def astar_pathfinding(graph, start_node, goal_node):
 
         for connection in current.connections:
             neighbor = connection.to_node
-            if neighbor.f_type == 0:
+            if neighbor.f_type == 2:
+                cost = 10
+            elif neighbor.f_type == 0:
                 continue
-            new_cost = cost_so_far[current] + connection.cost
+            elif neighbor.f_type == 3:
+                if npc == "Bulbasaur":
+                    cost = 10000
+                elif npc == "Charmander":
+                    cost = 0
+                else:
+                    cost = 50
+            elif neighbor.f_type == 4:
+                if npc == "Bulbasaur":
+                    cost = 0
+                elif npc == "Charmander":
+                    cost = 10000
+                    print("pupu")
+                else:
+                    cost = 50
+            else: cost = 50
+            
+            new_cost = cost_so_far[current] + cost
 
             if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
                 cost_so_far[neighbor] = new_cost
@@ -345,23 +386,6 @@ def astar_pathfinding(graph, start_node, goal_node):
                 heapq.heappush(open_list, (priority, neighbor))
                 came_from[neighbor] = current
     return None
-
-class DecisionTree:
-    def __init__(self, npc):
-        self.npc = npc
-
-    def make_decision(self, player_position, graph):
-        
-        if self.npc.is_player_near(player_position):
-            self.npc.change_image()
-
-        elif self.npc.rect.topleft == (10 * 30, 10 * 30):  # Verifica si está en (10,10)
-            self.npc.change_image()
-
-        # Si el NPC está en otra posición, se teletransporta
-        elif self.npc.rect.topleft == (20 * 30, 20 * 30):  # Verifica si está en (20,20)
-            self.npc.rect.x= 30
-            self.npc.rect.y= 30
 
 pygame.init()
 
@@ -375,16 +399,18 @@ graph = Graph(rows, cols)
 screen = pygame.display.set_mode((width, height))
 background_color = (26, 135, 58)
 
-pygame.display.set_caption("A* - Ditto, Ditto, Ditto")
+pygame.display.set_caption("Ditto, Ditto, Ditto")
 
 
 # PLAYER
 sprite_player = pygame.image.load('images/Male_Spritesheet.png')
+heart = pygame.image.load('images/heart.png')
+heart = pygame.transform.scale(heart, (30, 30))
 
 # NPCS
-ditto1 = NPC('images/Charmander.png', (100, 150))
-ditto2 = NPC('images/Bulbasaur.png', (1100,90))
-ditto3 = NPC('images/Pikachu.png', (800,389))
+ditto1 = NPC( (90, 90))
+ditto2 = NPC( (600,300))
+ditto3 = NPC((800,389))
 
 player1 = Player(sprite_player,34,34)
 
@@ -398,58 +424,111 @@ wall_image = pygame.transform.scale(wall_image, (cell_size, cell_size))
 fast_floor = pygame.image.load('images/floor_1.png').convert_alpha()
 fast_floor = pygame.transform.scale(fast_floor,(cell_size, cell_size))
 
+# Tactical points
+fire = pygame.image.load('images/fire.png').convert_alpha()
+fire = pygame.transform.scale(fire, (cell_size, cell_size))
+
+tall_grass = pygame.image.load('images/grass.png').convert_alpha()
+tall_grass = pygame.transform.scale(tall_grass, (cell_size, cell_size))
+
+# pokeball
+pokeball = pygame.image.load('images/pokeball1.png').convert_alpha()
+pokeball = pygame.transform.scale(pokeball,(cell_size-5,cell_size-5))
+
+# WALL POSITIONS
+walls_positions = []
+
+# Add borders
+for x in range(cols):
+    walls_positions.append((x, 0))  # Top border
+    walls_positions.append((x, rows -1))  # Bottom border
+for y in range(rows):
+    walls_positions.append((0, y))  # Left border
+    walls_positions.append((cols - 1, y))  # Right border
+
+# Add concentrated wall blocks
+for x in range(10, 15):
+    for y in range(10, 15):
+        walls_positions.append((x, y))
+
+for y in range(20, 30):
+    walls_positions.append((25, y))
+
+for x in range(30, 40):
+    walls_positions.append((x, 35))
+
+graph.set_floor_type(walls_positions, 0)
 
 
-graph.mark_as_wall([(3, 6),(4, 6),(4, 7),(5, 6),(6, 6),(6,7),(7, 7),(8,7),
-                    (9,9),(10,10),(10,9),(10,11),
-                    (13,10),(14,10),(15,10),
-                    (15,20),(15,21),(15,22),(15,23),(16,20),(16,21),(16,22),(16,23),
-                    (10,23),(11,23),(12,23),(13,23),(14,23), (15,23), (9,23),
-                    (5,29),(6,29),(7,29),(5,30),(6,30),(7,30),(5,31),(6,31),(7,31),
-                    (11,34),(12,34),(13,34),(14,34),(15,35),
-                    (16,40),(17,40),(18,40),(19,40),(20,40),
-                    (16,41),(17,41),(18,41),(19,41),(20,41)], 0)
+fire_positions = [
+    (5, 5), (6, 5), (7, 5), (8, 5), (9, 5),
+    (5, 6), (6, 6), (7, 6), (8, 6), (9, 6),
+    (5, 7), (6, 7), (7, 7), (8, 7), (9, 7),
+    (5, 8), (6, 8), (7, 8), (8, 8), (9, 8),
+    (5, 9), (6, 9), (7, 9), (8, 9), (9, 9),
+]
+
+grass_positions = [
+    (22, 10), (23, 10), (24, 10), (25, 10),
+    (22, 11), (23, 11), (24, 11), (25, 11),
+    (22, 12), (23, 12), (24, 12), (25, 12),
+    (22, 13), (23, 13), (24, 13), (25, 13),
+    (22, 14), (23, 14), (24, 14), (25, 14),
+    (22, 15), (23, 15), (24, 15), (25, 15),
+]
+
+graph.set_floor_type(fire_positions, 3)
+graph.set_floor_type(grass_positions, 4)
 
 
-graph.mark_as_wall( [(1,1),(1,2),(5,5),(10,6),(3,3),(10,9),(9,10),
+graph.set_floor_type( [(1,1),(1,2),(5,5),(10,6),(3,3),(10,9),(9,10),
             (11,10),(11,12),(11,13),(11,14),(11,11)],2)
+
+
 
 running = True
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-    
+
     player1.update()
 
     # Update NPCs
     ditto1.update(player1, graph,npc_group)
     ditto2.update(player1, graph, npc_group)
     ditto3.update(player1, graph, npc_group)
-        
-    screen.fill((26, 135, 58))
+
+    screen.fill((50, 200, 50))
 
 
     COLOR_NORMAL = (50, 200, 50)
     COLOR_BORDER = (148, 148, 148)
+    
+    floor_images = {
+        0: wall_image,
+        2: fast_floor,
+        3: fire,
+        4: tall_grass
+    }
 
     for y in range(graph.grid_height):
         for x in range(graph.grid_width):
             node = graph.grid[x][y]
-
-            if node.f_type == 0:  # not walkable node (wall)
-                screen.blit(wall_image, (x * cell_size, y * cell_size))
-            # walkables nodes
-            elif node.f_type ==2: # speedy node
-                screen.blit(fast_floor,(x*cell_size, y*cell_size))
-            else:  # normal node
-                color = COLOR_NORMAL
+            
+            rect = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
+            image = floor_images.get(node.f_type)
+            if image:
+                screen.blit(image, (x * cell_size, y * cell_size))
+            else:
                 rect = pygame.Rect(x * cell_size, y * cell_size, cell_size, cell_size)
-                pygame.draw.rect(screen, color, rect)
-
+                pygame.draw.rect(screen, COLOR_NORMAL, rect)
             pygame.draw.rect(screen, COLOR_BORDER, rect, 1)
-    all_sprites.draw(screen)
+            
+    screen.blit(pokeball,(22*cell_size, 13*cell_size, cell_size,cell_size))
     
+    all_sprites.draw(screen)
+
     for node in graph.grid[x][y].connections:
         pygame.draw.line(screen, (0, 0, 0),
                      (node.from_node.x * cell_size + cell_size // 2,
@@ -457,6 +536,26 @@ while running:
                      (node.to_node.x * cell_size + cell_size // 2,
                       node.to_node.y * cell_size + cell_size // 2), 1)
     
+    # show path
+    for npc in npc_group:
+        if npc.node_path:
+            if len(npc.node_path) > 1:  # at least two nodes in the path
+                for i in range(len(npc.node_path) - 1):
+                    start_node = npc.node_path[i]
+                    end_node = npc.node_path[i + 1]
+
+                    # nodes coordenates
+                    start_pos = (start_node.x * cell_size + cell_size // 2, start_node.y * cell_size + cell_size // 2)
+                    end_pos = (end_node.x * cell_size + cell_size // 2, end_node.y * cell_size + cell_size // 2)
+
+                    pygame.draw.line(screen, (255, 0, 0), start_pos, end_pos, 2)
+
+
+    for i in range(player1.lives):
+        x = 10 + i * 40
+        y = 10
+        screen.blit(heart, (x, y))
+
     pygame.display.flip()
 
 pygame.quit()
